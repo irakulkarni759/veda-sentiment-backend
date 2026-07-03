@@ -91,6 +91,7 @@ def save_result(claim: str, normalized: str, summary: dict, comments: list[dict]
         "sentiment_score": summary["sentiment_score"],
         "key_themes": summary["key_themes"],
         "caveats": summary["caveats"],
+        "top_quotes": summary["top_quotes"],
         "comment_count": len(comments),
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -113,6 +114,8 @@ def save_result(claim: str, normalized: str, summary: dict, comments: list[dict]
                 "score": c.get("score", 0),
                 "subreddit": c.get("subreddit"),
                 "post_title": c.get("post_title"),
+                "author": c.get("author"),
+                "url": c.get("url"),
             }
             for c in comments
         ]
@@ -135,6 +138,7 @@ def get_claim(query: str = Query(..., min_length=2)):
             "sentiment_score": cached["sentiment_score"],
             "key_themes": cached["key_themes"],
             "caveats": cached["caveats"],
+            "top_quotes": cached.get("top_quotes", []),
             "comments": cached["comments"],
             "cached": True,
         }
@@ -151,6 +155,7 @@ def get_claim(query: str = Query(..., min_length=2)):
         "sentiment_score": summary["sentiment_score"],
         "key_themes": summary["key_themes"],
         "caveats": summary["caveats"],
+        "top_quotes": summary["top_quotes"],
         "comments": comments,
         "cached": False,
     }
