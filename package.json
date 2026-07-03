@@ -1,0 +1,9 @@
+{
+  "name": "veda-reddit-quotes",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "@supabase/supabase-js": "^2.108.2"
+  }
+}

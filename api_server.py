@@ -1,0 +1,156 @@
+"""
+Veda claim-sentiment API.
+
+Flow per request:
+  1. Normalize the claim text.
+  2. Check Supabase for a cached, fresh entry -> return instantly if found.
+  3. Otherwise: scrape Reddit, summarize with Claude, save to Supabase, return.
+
+Requires:
+  pip install fastapi uvicorn supabase python-dotenv
+
+Env vars (put in a .env file, loaded via python-dotenv):
+  SUPABASE_URL=
+  SUPABASE_SERVICE_ROLE_KEY=      # service_role key, NOT anon key (bypasses RLS for writes)
+  ANTHROPIC_API_KEY=
+
+Run locally:
+  uvicorn api_server:app --reload --port 8787
+
+Deploy: Railway, Render, or Fly.io all work for a small always-on Python service.
+Cloudflare Workers can't run this directly (no native TLS binaries), so this
+stays a separate service that your TanStack frontend calls over HTTP.
+"""
+
+import os
+from datetime import datetime, timedelta, timezone
+
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+from supabase import create_client
+
+from reddit_sentiment import gather_sentiment
+from summarize import summarize_comments
+
+load_dotenv()
+
+supabase = create_client(
+    os.environ["SUPABASE_URL"],
+    os.environ["SUPABASE_SERVICE_ROLE_KEY"],
+)
+
+CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
+
+app = FastAPI(title="Veda Claim Sentiment API")
+
+# Adjust to your actual Lovable / production origin(s) before shipping.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten this to your real frontend domain in production
+    allow_methods=["GET"],
+    allow_headers=["*"],
+)
+
+
+def normalize(claim: str) -> str:
+    return " ".join(claim.strip().lower().split())
+
+
+def get_cached(normalized: str):
+    res = (
+        supabase.table("claims")
+        .select("*")
+        .eq("normalized_claim", normalized)
+        .limit(1)
+        .execute()
+    )
+    if not res.data:
+        return None
+    row = res.data[0]
+    updated = datetime.fromisoformat(row["updated_at"].replace("Z", "+00:00"))
+    if datetime.now(timezone.utc) - updated > timedelta(days=CACHE_TTL_DAYS):
+        return None  # stale, treat as cache miss
+    comments_res = (
+        supabase.table("claim_comments")
+        .select("*")
+        .eq("claim_id", row["id"])
+        .order("score", desc=True)
+        .execute()
+    )
+    row["comments"] = comments_res.data
+    return row
+
+
+def save_result(claim: str, normalized: str, summary: dict, comments: list[dict]):
+    claim_row = {
+        "claim_text": claim,
+        "normalized_claim": normalized,
+        "summary": summary["summary"],
+        "sentiment": summary["sentiment"],
+        "sentiment_score": summary["sentiment_score"],
+        "key_themes": summary["key_themes"],
+        "caveats": summary["caveats"],
+        "comment_count": len(comments),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    existing = (
+        supabase.table("claims").select("id").eq("normalized_claim", normalized).execute()
+    )
+    if existing.data:
+        claim_id = existing.data[0]["id"]
+        supabase.table("claims").update(claim_row).eq("id", claim_id).execute()
+        supabase.table("claim_comments").delete().eq("claim_id", claim_id).execute()
+    else:
+        inserted = supabase.table("claims").insert(claim_row).execute()
+        claim_id = inserted.data[0]["id"]
+
+    if comments:
+        rows = [
+            {
+                "claim_id": claim_id,
+                "body": c["body"],
+                "score": c.get("score", 0),
+                "subreddit": c.get("subreddit"),
+                "post_title": c.get("post_title"),
+            }
+            for c in comments
+        ]
+        # batch insert
+        supabase.table("claim_comments").insert(rows).execute()
+
+    return claim_id
+
+
+@app.get("/api/claim")
+def get_claim(query: str = Query(..., min_length=2)):
+    normalized = normalize(query)
+
+    cached = get_cached(normalized)
+    if cached:
+        return {
+            "claim": cached["claim_text"],
+            "summary": cached["summary"],
+            "sentiment": cached["sentiment"],
+            "sentiment_score": cached["sentiment_score"],
+            "key_themes": cached["key_themes"],
+            "caveats": cached["caveats"],
+            "comments": cached["comments"],
+            "cached": True,
+        }
+
+    # Cache miss: do the real work
+    comments = gather_sentiment(query, post_limit=15, per_post_comments=40)
+    summary = summarize_comments(query, comments)
+    save_result(query, normalized, summary, comments)
+
+    return {
+        "claim": query,
+        "summary": summary["summary"],
+        "sentiment": summary["sentiment"],
+        "sentiment_score": summary["sentiment_score"],
+        "key_themes": summary["key_themes"],
+        "caveats": summary["caveats"],
+        "comments": comments,
+        "cached": False,
+    }
