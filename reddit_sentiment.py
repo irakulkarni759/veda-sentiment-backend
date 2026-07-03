@@ -153,10 +153,13 @@ def fetch_comments(permalink, min_score=1, max_comments=100):
             c = child.get("data", {})
             body = (c.get("body") or "").strip()
             if body and body not in ("[deleted]", "[removed]") and c.get("score", 0) >= min_score:
+                permalink = c.get("permalink")  # e.g. /r/sub/comments/abc123/title/def456/
                 comments.append({
                     "body": body,
                     "score": c.get("score", 0),
                     "subreddit": c.get("subreddit"),
+                    "author": c.get("author"),
+                    "url": f"{BASE}{permalink}" if permalink else None,
                 })
             replies = c.get("replies")
             if isinstance(replies, dict):
