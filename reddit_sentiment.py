@@ -15,9 +15,36 @@ Install:  pip install tls_client
 Run:      python reddit_sentiment.py
 """
 
+import re
 import time
 import random
 import tls_client
+
+# Common words that carry no topic signal, so they shouldn't count as a
+# keyword match when deciding whether a post is on-topic for the query.
+_STOPWORDS = {
+    "for", "the", "a", "an", "and", "or", "with", "to", "of", "in", "on",
+    "is", "are", "does", "do", "vs", "how", "what", "best", "good", "help",
+    "my", "your", "it", "that", "this",
+}
+
+
+def _keywords(query):
+    """Significant lowercase words from the query, used to gauge whether a
+    post is actually about the topic vs. only matching on incidental words."""
+    return [
+        w for w in re.split(r"[^a-z0-9]+", query.lower())
+        if len(w) > 2 and w not in _STOPWORDS
+    ]
+
+
+def _post_is_relevant(post, keywords):
+    """Keep a post only if its title or body shares a significant word with
+    the query. Fails open (True) when there are no usable keywords."""
+    if not keywords:
+        return True
+    hay = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
+    return any(k in hay for k in keywords)
 
 # tls_client replays a browser's full TLS + HTTP2 fingerprint. If Reddit ever
 # starts 403ing again, try a newer identifier, e.g. "chrome131".
@@ -169,19 +196,33 @@ def fetch_comments(permalink, min_score=1, max_comments=100):
     return comments[:max_comments]
 
 
-def gather_sentiment(query, post_limit=15, per_post_comments=40, subreddit=None):
+def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
     """Top-level entry for Veda: claim string -> list of relevant comments."""
     posts = search_posts(query, limit=post_limit, subreddit=subreddit)
-    print(f"[info] {len(posts)} posts for '{query}'")
+
+    # Drop posts that don't share any significant word with the query before
+    # we spend a request pulling their comment tree. Reddit's relevance sort
+    # still returns loosely-related threads for niche claims, and every
+    # comment from an off-topic post pollutes the quote pool. Fail open: if
+    # the filter would remove everything (unusual query phrasing), keep the
+    # full set rather than returning nothing.
+    keywords = _keywords(query)
+    relevant_posts = [p for p in posts if _post_is_relevant(p, keywords)]
+    posts_to_use = relevant_posts or posts
+    print(f"[info] {len(posts)} posts for '{query}', {len(posts_to_use)} kept after relevance filter")
+
     all_comments = []
-    for p in posts:
+    for p in posts_to_use:
         if p["num_comments"] == 0:
             continue
         cs = fetch_comments(p["permalink"], max_comments=per_post_comments)
         for c in cs:
             c["post_title"] = p["title"]
         all_comments.extend(cs)
-        time.sleep(random.uniform(1.0, 2.0))  # be polite; dodge 429s
+        # Still randomized and >0.5s to stay polite and dodge 429s, but
+        # tighter than before so an uncached request finishes inside the
+        # frontend's fetch window instead of timing out and showing nothing.
+        time.sleep(random.uniform(0.5, 1.0))
     print(f"[info] {len(all_comments)} comments gathered")
     return all_comments
 

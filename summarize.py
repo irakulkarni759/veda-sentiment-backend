@@ -39,11 +39,23 @@ Given a claim and a NUMBERED list of Reddit comments discussing it, return ONLY 
 Base this ONLY on the provided comments. Do not invent studies or claims not present in the text. \
 If comments are too sparse or off-topic to judge, use sentiment "insufficient_data".
 
-For "top_quote_indices": pick UP TO 3 comment numbers that are genuinely ON-TOPIC for the claim \
-and representative of the community's view (mix of perspectives if the community is split). \
-Skip comments that are off-topic, jokes, unrelated to the claim, or noise — even if they have a \
-high score. Score is just Reddit upvotes, not relevance; judge relevance from the text itself. \
-If NONE of the comments are actually on-topic, return an empty array — do not force irrelevant picks."""
+For "top_quote_indices": pick UP TO 3 comment numbers, applying a STRICT relevance bar. A comment \
+qualifies only if BOTH hold:
+
+1. It speaks to THIS SPECIFIC claim, not just the same general ingredient/practice used for a \
+different purpose. If the claim is "Jojoba Oil for Hair Growth", a genuine comment about jojoba oil \
+for acne or dry skin is NOT relevant even though it mentions jojoba oil. Match the OUTCOME, not just \
+the subject.
+2. It shares the person's own experience, result, or opinion on the claim, not just a question, a \
+request for advice, or a one-word reaction with no substance.
+
+Each comment shows the title of the post it came from in [brackets] as context. Use that title to \
+resolve vague references (a comment saying "it worked great" under a post titled "Did rosemary oil \
+regrow your hairline?" is on-topic; the same comment under an unrelated post is not). But base the \
+final judgment on what the COMMENT actually says, not just the post title. Score is Reddit upvotes, \
+not relevance, so ignore it for this decision. Prefer a mix of perspectives when the community is \
+split. If FEWER than 3 comments clear this bar, return only those that do. If NONE do, return an \
+empty array — never force an irrelevant or off-topic pick just to fill the list."""
 
 
 def summarize_comments(claim: str, comments: list[dict], max_comments_in_prompt: int = 150) -> dict:
@@ -69,10 +81,16 @@ def summarize_comments(claim: str, comments: list[dict], max_comments_in_prompt:
     # selection below is what actually decides which ones get shown.
     ranked = sorted(comments, key=lambda c: c.get("score", 0), reverse=True)[:max_comments_in_prompt]
 
-    comment_block = "\n".join(
-        f"[{i}] (score:{c.get('score', 0)}) r/{c.get('subreddit', '')}: {c['body'][:500]}"
-        for i, c in enumerate(ranked)
-    )
+    def _fmt(i: int, c: dict) -> str:
+        # Include the title of the post each comment came from. Without it,
+        # the relevance judge sees a bare comment ("this changed everything
+        # for me") with no anchor and can't tell whether it's actually about
+        # the claim or about something unrelated in a loosely-matched thread.
+        title = (c.get("post_title") or "").strip()
+        context = f' [from post: "{title[:120]}"]' if title else ""
+        return f"[{i}] (score:{c.get('score', 0)}) r/{c.get('subreddit', '')}{context}: {c['body'][:500]}"
+
+    comment_block = "\n".join(_fmt(i, c) for i, c in enumerate(ranked))
 
     message = client.messages.create(
         model=MODEL,

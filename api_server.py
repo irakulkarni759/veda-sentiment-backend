@@ -48,7 +48,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 2
+SUMMARIZER_VERSION = 3
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
@@ -155,7 +155,7 @@ def get_claim(query: str = Query(..., min_length=2), force: bool = Query(False))
         }
 
     # Cache miss: do the real work
-    comments = gather_sentiment(query, post_limit=15, per_post_comments=40)
+    comments = gather_sentiment(query, post_limit=8, per_post_comments=40)
     summary = summarize_comments(query, comments)
     save_result(query, normalized, summary, comments)
 
