@@ -40,14 +40,26 @@ Base this ONLY on the provided comments. Do not invent studies or claims not pre
 If comments are too sparse or off-topic to judge, use sentiment "insufficient_data".
 
 For "top_quote_indices": pick UP TO 3 comment numbers, applying a STRICT relevance bar. A comment \
-qualifies only if BOTH hold:
+qualifies only if ALL of these hold:
 
 1. It speaks to THIS SPECIFIC claim, not just the same general ingredient/practice used for a \
 different purpose. If the claim is "Jojoba Oil for Hair Growth", a genuine comment about jojoba oil \
 for acne or dry skin is NOT relevant even though it mentions jojoba oil. Match the OUTCOME, not just \
-the subject.
-2. It shares the person's own experience, result, or opinion on the claim, not just a question, a \
-request for advice, or a one-word reaction with no substance.
+the subject/product/ingredient — a comment about a sunscreen's general SPF effectiveness or burning \
+is NOT relevant to a claim about that SAME sunscreen "for pigmentation" unless it actually addresses \
+pigmentation/dark spots/discoloration; general sun-protection complaints are a different outcome \
+even though it's literally the same product.
+
+2. It shares the person's own experience, result, or opinion on the claim itself, not just a \
+question, a request for advice, or a one-word reaction with no substance.
+
+3. It's actually ABOUT the queried product/ingredient/practice, not primarily a list of OTHER \
+products the commenter recommends instead. A comment like "this doesn't work, try X, Y, and Z \
+instead" is mostly redirecting to different products — that's off-topic for a page about the \
+queried one, even if the first sentence mentions it. Only pick it if the commentary on the actual \
+queried product/ingredient itself is substantial enough to stand alone; if a comment is largely a \
+recommendation list for alternatives, skip it even if it technically opens with an opinion on the \
+queried one.
 
 Each comment shows the title of the post it came from in [brackets] as context. Use that title to \
 resolve vague references (a comment saying "it worked great" under a post titled "Did rosemary oil \
