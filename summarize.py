@@ -50,6 +50,15 @@ is NOT relevant to a claim about that SAME sunscreen "for pigmentation" unless i
 pigmentation/dark spots/discoloration; general sun-protection complaints are a different outcome \
 even though it's literally the same product.
 
+This is about OUTCOME mismatch, not minor PRODUCT-VARIANT differences — do not apply this so strictly \
+that you reject a comment just because it doesn't explicitly confirm the exact sub-variant/formula \
+name in the claim. If the claim is "Neutrogena On-The-Spot Acne Treatment (Vanishing Formula)", a \
+comment simply saying "Neutrogena On-The-Spot" or "the Neutrogena spot treatment" worked for their \
+acne IS relevant — people rarely repeat a product's full marketing name, and different \
+formula/scent/size variants of the same core product are still the same product for this purpose. \
+Only treat it as a mismatch when the comment is about a genuinely different PRODUCT or a genuinely \
+different OUTCOME, not when it's just less precise about which variant.
+
 2. It shares the person's own experience, result, or opinion on the claim itself, not just a \
 question, a request for advice, or a one-word reaction with no substance.
 

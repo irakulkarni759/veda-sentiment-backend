@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 3
+SUMMARIZER_VERSION = 4  # v4: relevance judge no longer rejects comments over minor product-variant naming differences (was incorrectly treating "Neutrogena On-The-Spot" as a mismatch for "...(Vanishing Formula)")
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
