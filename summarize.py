@@ -39,36 +39,30 @@ Given a claim and a NUMBERED list of Reddit comments discussing it, return ONLY 
 Base this ONLY on the provided comments. Do not invent studies or claims not present in the text. \
 If comments are too sparse or off-topic to judge, use sentiment "insufficient_data".
 
-For "top_quote_indices": pick UP TO 3 comment numbers, applying a STRICT relevance bar. A comment \
-qualifies only if ALL of these hold:
+For "top_quote_indices": pick UP TO 3 comment numbers that are reasonably relevant to the claim. \
+Real Reddit discussion exists for almost any wellness topic — if comments were gathered, some are \
+very likely usable. Default to INCLUDING a comment unless you have a real, specific reason to \
+exclude it; don't reject something just because it's imperfect, brief, or doesn't restate the claim \
+word-for-word. A comment only needs to clear these:
 
-1. It speaks to THIS SPECIFIC claim, not just the same general ingredient/practice used for a \
-different purpose. If the claim is "Jojoba Oil for Hair Growth", a genuine comment about jojoba oil \
-for acne or dry skin is NOT relevant even though it mentions jojoba oil. Match the OUTCOME, not just \
-the subject/product/ingredient — a comment about a sunscreen's general SPF effectiveness or burning \
-is NOT relevant to a claim about that SAME sunscreen "for pigmentation" unless it actually addresses \
-pigmentation/dark spots/discoloration; general sun-protection complaints are a different outcome \
-even though it's literally the same product.
+1. It's genuinely ABOUT the claim's product/ingredient/practice AND its outcome — not a different \
+product entirely, and not a clearly different purpose. If the claim is "Jojoba Oil for Hair Growth", \
+a comment about jojoba oil for acne is a real mismatch (different outcome). But don't over-apply \
+this: minor product-variant/formula/scent/size differences are NOT a mismatch (a comment about \
+"Neutrogena On-The-Spot" is relevant to a claim about "Neutrogena On-The-Spot Acne Treatment \
+(Vanishing Formula)" — people rarely repeat a product's full marketing name), and a comment doesn't \
+need to use the exact outcome wording either (a comment about "clearing up my skin" is relevant to \
+an "acne treatment" claim). When a comment is in the right general territory, include it rather than \
+finding a technicality to exclude it.
 
-This is about OUTCOME mismatch, not minor PRODUCT-VARIANT differences — do not apply this so strictly \
-that you reject a comment just because it doesn't explicitly confirm the exact sub-variant/formula \
-name in the claim. If the claim is "Neutrogena On-The-Spot Acne Treatment (Vanishing Formula)", a \
-comment simply saying "Neutrogena On-The-Spot" or "the Neutrogena spot treatment" worked for their \
-acne IS relevant — people rarely repeat a product's full marketing name, and different \
-formula/scent/size variants of the same core product are still the same product for this purpose. \
-Only treat it as a mismatch when the comment is about a genuinely different PRODUCT or a genuinely \
-different OUTCOME, not when it's just less precise about which variant.
+2. It shares the person's own experience, result, or opinion, not just a bare question with zero \
+substance. A comment can mention a question or mixed feelings and still count, as long as there's a \
+real opinion or experience in it somewhere.
 
-2. It shares the person's own experience, result, or opinion on the claim itself, not just a \
-question, a request for advice, or a one-word reaction with no substance.
-
-3. It's actually ABOUT the queried product/ingredient/practice, not primarily a list of OTHER \
-products the commenter recommends instead. A comment like "this doesn't work, try X, Y, and Z \
-instead" is mostly redirecting to different products — that's off-topic for a page about the \
-queried one, even if the first sentence mentions it. Only pick it if the commentary on the actual \
-queried product/ingredient itself is substantial enough to stand alone; if a comment is largely a \
-recommendation list for alternatives, skip it even if it technically opens with an opinion on the \
-queried one.
+3. It isn't PRIMARILY a list of other products instead of the queried one. A comment that's mostly \
+"try X, Y, Z instead" with only a passing mention of the queried product is off-topic. But a comment \
+that's mainly about the queried product and just mentions an alternative in passing is fine — don't \
+exclude it over one extra sentence.
 
 Each comment shows the title of the post it came from in [brackets] as context. Use that title to \
 resolve vague references (a comment saying "it worked great" under a post titled "Did rosemary oil \
