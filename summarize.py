@@ -14,6 +14,7 @@ Env var:  ANTHROPIC_API_KEY
 """
 
 import os
+import re
 import json
 from anthropic import Anthropic
 
@@ -64,6 +65,10 @@ real opinion or experience in it somewhere.
 that's mainly about the queried product and just mentions an alternative in passing is fine — don't \
 exclude it over one extra sentence.
 
+4. It reads like a PERSON TALKING, not a resource dump. Never pick a comment that is primarily \
+links/URLs, a bibliography of studies, a bulleted list of resources, or copy-pasted reference \
+material — even when the links are on-topic. A displayed quote has to be someone's own words.
+
 Each comment shows the title of the post it came from in [brackets] as context. Use that title to \
 resolve vague references (a comment saying "it worked great" under a post titled "Did rosemary oil \
 regrow your hairline?" is on-topic; the same comment under an unrelated post is not). But base the \
@@ -92,9 +97,25 @@ def summarize_comments(claim: str, comments: list[dict], max_comments_in_prompt:
     if not comments:
         return empty_result
 
+    # Drop comments that are essentially link dumps BEFORE the judge ever
+    # sees them as quote candidates — a bibliography of on-topic URLs is
+    # still useless as a displayed quote, and the model occasionally picked
+    # one anyway. 2+ URLs, or one URL that is most of the comment, = junk.
+    def _is_link_dump(body: str) -> bool:
+        urls = re.findall(r"https?://\S+|www\.\S+\.\S+", body)
+        if len(urls) >= 2:
+            return True
+        url_chars = sum(len(u) for u in urls)
+        return bool(urls) and url_chars / max(len(body), 1) > 0.3
+
+    quoteworthy = [c for c in comments if not _is_link_dump(c.get("body", ""))]
+    # Fail open: if the filter would remove everything, keep the originals
+    # (the summary is still computable even if no quote gets picked).
+    usable = quoteworthy or comments
+
     # Highest-score first just for prompt ordering/truncation — relevance
     # selection below is what actually decides which ones get shown.
-    ranked = sorted(comments, key=lambda c: c.get("score", 0), reverse=True)[:max_comments_in_prompt]
+    ranked = sorted(usable, key=lambda c: c.get("score", 0), reverse=True)[:max_comments_in_prompt]
 
     def _fmt(i: int, c: dict) -> str:
         # Include the title of the post each comment came from. Without it,
