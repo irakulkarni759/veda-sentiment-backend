@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 5  # v5: relevance judge was systemically over-rejecting — rewrote from a "STRICT bar, ALL must hold" framing to "reasonably relevant, default to including" (v4's variant-naming fix was a symptom of this same over-strictness, not a one-off)
+SUMMARIZER_VERSION = 6  # v6: multi-pass retrieval in gather_sentiment (query variants + sort=comments fallback) — rows cached from the old single-pass scrape often have few/zero comments for claims that DO have real discussion, so force a re-scrape
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
@@ -171,6 +171,7 @@ def _cached_to_response(cached: dict) -> dict:
         "key_themes": cached["key_themes"],
         "caveats": cached["caveats"],
         "top_quotes": cached.get("top_quotes", []),
+        "comment_count": cached.get("comment_count") or len(cached.get("comments") or []),
         "comments": cached["comments"],
         "cached": True,
     }
@@ -191,6 +192,7 @@ def _run_claim_scrape(query: str) -> dict:
         "key_themes": summary["key_themes"],
         "caveats": summary["caveats"],
         "top_quotes": summary["top_quotes"],
+        "comment_count": len(comments),
         "comments": comments,
         "cached": False,
     }

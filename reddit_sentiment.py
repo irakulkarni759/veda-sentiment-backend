@@ -196,34 +196,104 @@ def fetch_comments(permalink, min_score=1, max_comments=100):
     return comments[:max_comments]
 
 
+def _search_variants(query):
+    """Progressively broader search phrasings for one claim, most specific
+    first. Reddit has threads on almost any wellness topic — when the full
+    query comes up dry it's nearly always the PHRASING (a "for <purpose>"
+    clause nobody writes in a post title, or product-name noise like
+    "10% + Zinc 1%"), not a genuine absence of discussion. Later variants
+    only run when earlier ones didn't gather enough comments."""
+    variants = [query]
+
+    # Punctuation/concentration noise: "Niacinamide 10% + Zinc 1%" -> the
+    # words people actually type in a thread title.
+    cleaned = re.sub(r"\d+(\.\d+)?\s*%", " ", query)
+    cleaned = re.sub(r"[+/®™]", " ", cleaned)
+    cleaned = " ".join(cleaned.split())
+    if cleaned and cleaned.lower() != query.lower():
+        variants.append(cleaned)
+
+    # Strip a trailing "for <purpose>" clause — people discuss "rosemary
+    # oil", not "rosemary oil for hair growth".
+    for base in (query, cleaned):
+        idx = base.lower().find(" for ")
+        if idx > 0:
+            core = base[:idx].strip()
+            if core:
+                variants.append(core)
+
+    # Dedupe, preserving order.
+    seen = set()
+    out = []
+    for v in variants:
+        key = v.lower()
+        if key not in seen:
+            seen.add(key)
+            out.append(v)
+    return out
+
+
+# Stop broadening once this many comments are in hand — enough for a real
+# summary + quote selection without burning the request budget.
+MIN_COMMENTS_TARGET = 12
+# Hard cap on comment-tree fetches per claim across ALL passes, so the
+# broadened search can't blow past the frontend's polling patience.
+MAX_POSTS_TOTAL = 10
+
+
 def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
-    """Top-level entry for Veda: claim string -> list of relevant comments."""
-    posts = search_posts(query, limit=post_limit, subreddit=subreddit)
+    """Top-level entry for Veda: claim string -> list of relevant comments.
 
-    # Drop posts that don't share any significant word with the query before
-    # we spend a request pulling their comment tree. Reddit's relevance sort
-    # still returns loosely-related threads for niche claims, and every
-    # comment from an off-topic post pollutes the quote pool. Fail open: if
-    # the filter would remove everything (unusual query phrasing), keep the
-    # full set rather than returning nothing.
-    keywords = _keywords(query)
-    relevant_posts = [p for p in posts if _post_is_relevant(p, keywords)]
-    posts_to_use = relevant_posts or posts
-    print(f"[info] {len(posts)} posts for '{query}', {len(posts_to_use)} kept after relevance filter")
-
+    Multi-pass: tries the query as given, then progressively broader
+    variants (punctuation stripped, purpose clause dropped, sort=comments)
+    until enough comments are gathered or the request budget runs out."""
     all_comments = []
-    for p in posts_to_use:
-        if p["num_comments"] == 0:
-            continue
-        cs = fetch_comments(p["permalink"], max_comments=per_post_comments)
-        for c in cs:
-            c["post_title"] = p["title"]
-        all_comments.extend(cs)
-        # Still randomized and >0.5s to stay polite and dodge 429s, but
-        # tighter than before so an uncached request finishes inside the
-        # frontend's fetch window instead of timing out and showing nothing.
-        time.sleep(random.uniform(0.5, 1.0))
-    print(f"[info] {len(all_comments)} comments gathered")
+    seen_post_ids = set()
+    posts_fetched = 0
+
+    def run_pass(search_query, sort="relevance"):
+        nonlocal posts_fetched
+        posts = search_posts(search_query, limit=post_limit, sort=sort, subreddit=subreddit)
+
+        # Drop posts that don't share any significant word with the query
+        # before we spend a request pulling their comment tree. Fail open:
+        # if the filter would remove everything, keep the full set.
+        keywords = _keywords(search_query)
+        fresh = [p for p in posts if p.get("id") not in seen_post_ids]
+        relevant = [p for p in fresh if _post_is_relevant(p, keywords)]
+        posts_to_use = relevant or fresh
+        print(
+            f"[info] pass '{search_query}' (sort={sort}): {len(posts)} posts, "
+            f"{len(posts_to_use)} new+relevant"
+        )
+
+        for p in posts_to_use:
+            if posts_fetched >= MAX_POSTS_TOTAL or len(all_comments) >= MIN_COMMENTS_TARGET * 3:
+                return
+            if p["num_comments"] == 0:
+                continue
+            seen_post_ids.add(p.get("id"))
+            posts_fetched += 1
+            cs = fetch_comments(p["permalink"], max_comments=per_post_comments)
+            for c in cs:
+                c["post_title"] = p["title"]
+            all_comments.extend(cs)
+            # Still randomized and >0.5s to stay polite and dodge 429s, but
+            # tight enough that an uncached request finishes inside the
+            # frontend's polling window.
+            time.sleep(random.uniform(0.5, 1.0))
+
+    for variant in _search_variants(query):
+        run_pass(variant)
+        if len(all_comments) >= MIN_COMMENTS_TARGET or posts_fetched >= MAX_POSTS_TOTAL:
+            break
+
+    # Last resort: same broadest variant, but ranked by comment count —
+    # surfaces big discussion threads that relevance sort can bury.
+    if len(all_comments) < MIN_COMMENTS_TARGET and posts_fetched < MAX_POSTS_TOTAL:
+        run_pass(_search_variants(query)[-1], sort="comments")
+
+    print(f"[info] {len(all_comments)} comments gathered across {posts_fetched} posts")
     return all_comments
 
 
