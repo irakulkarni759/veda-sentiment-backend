@@ -68,6 +68,10 @@ HEADERS = {
 }
 
 BASE = "https://www.reddit.com"
+# Fallback host: Reddit's WAF treats www and old differently — datacenter
+# egress IPs (Railway et al) that get empty/blocked responses from www
+# often still get real JSON from old.reddit.com. Same .json endpoints.
+OLD_BASE = "https://old.reddit.com"
 
 # If low-volume datacenter requests start getting blocked, add a residential
 # proxy here, e.g. "http://user:pass@host:port". Try TLS first.
@@ -133,13 +137,14 @@ def _get_json(url, params=None, max_retries=3):
 
 
 def search_posts(query, limit=25, sort="relevance", time_filter="all", subreddit=None):
-    """Find posts relevant to a wellness claim. Optionally scope to a subreddit."""
-    if subreddit:
-        url = f"{BASE}/r/{subreddit}/search.json"
-        params = {"restrict_sr": 1}
-    else:
-        url = f"{BASE}/search.json"
-        params = {}
+    """Find posts relevant to a wellness claim. Optionally scope to a subreddit.
+
+    Tries www.reddit.com first, then old.reddit.com — an empty result from
+    www very often means the egress IP is being soft-blocked (observed on
+    Railway: instant empty responses for queries with plenty of real
+    results), and old.reddit frequently still serves real JSON there."""
+    path = f"/r/{subreddit}/search.json" if subreddit else "/search.json"
+    params = {"restrict_sr": 1} if subreddit else {}
     params.update({
         "q": query,
         "limit": limit,
@@ -148,27 +153,35 @@ def search_posts(query, limit=25, sort="relevance", time_filter="all", subreddit
         "type": "link",
         "raw_json": 1,
     })
-    data = _get_json(url, params=params)
-    if not data:
-        return []
-    out = []
-    for child in data.get("data", {}).get("children", []):
-        d = child.get("data", {})
-        out.append({
-            "id": d.get("id"),
-            "title": d.get("title"),
-            "selftext": d.get("selftext", ""),
-            "subreddit": d.get("subreddit"),
-            "permalink": d.get("permalink"),
-            "score": d.get("score", 0),
-            "num_comments": d.get("num_comments", 0),
-        })
-    return out
+
+    for base in (BASE, OLD_BASE):
+        data = _get_json(f"{base}{path}", params=params)
+        out = []
+        for child in (data or {}).get("data", {}).get("children", []):
+            d = child.get("data", {})
+            out.append({
+                "id": d.get("id"),
+                "title": d.get("title"),
+                "selftext": d.get("selftext", ""),
+                "subreddit": d.get("subreddit"),
+                "permalink": d.get("permalink"),
+                "score": d.get("score", 0),
+                "num_comments": d.get("num_comments", 0),
+            })
+        if out:
+            return out
+        print(f"[warn] empty search from {base} for '{query}'"
+              + ("; trying old.reddit.com" if base == BASE else ""))
+    return []
 
 
 def fetch_comments(permalink, min_score=1, max_comments=100):
-    """Fetch and flatten one post's comment tree (top-level + nested replies)."""
+    """Fetch and flatten one post's comment tree (top-level + nested replies).
+    Same www -> old.reddit.com fallback as search_posts; displayed comment
+    permalinks always use www regardless of which host served the data."""
     data = _get_json(f"{BASE}{permalink}.json", params={"raw_json": 1, "limit": 200})
+    if not data or len(data) < 2:
+        data = _get_json(f"{OLD_BASE}{permalink}.json", params={"raw_json": 1, "limit": 200})
     if not data or len(data) < 2:
         return []
     comments = []
