@@ -436,13 +436,29 @@ def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
         fresh = [p for p in posts if p.get("id") not in seen_post_ids]
         relevant = [p for p in fresh if _post_is_relevant(p, keywords)]
         posts_to_use = relevant or fresh
+
+        # Fetch strongest keyword matches first. Reddit's RSS search ordering
+        # is noticeably worse than .json's — a huge thread matching one
+        # incidental word ("spearmint TEA" for "peppermint tea for ibs") can
+        # outrank every on-topic thread, and whatever gets fetched first eats
+        # the comment budget. Stable sort keeps Reddit's order within ties.
+        def _match_count(p):
+            hay = f"{p.get('title', '')} {p.get('selftext', '')}".lower()
+            return sum(1 for k in keywords if k in hay)
+
+        posts_to_use = sorted(posts_to_use, key=_match_count, reverse=True)
         print(
             f"[info] pass '{search_query}' (sort={sort}): {len(posts)} posts, "
             f"{len(posts_to_use)} new+relevant"
         )
 
         for p in posts_to_use:
-            if posts_fetched >= MAX_POSTS_TOTAL or len(all_comments) >= MIN_COMMENTS_TARGET * 3:
+            if posts_fetched >= MAX_POSTS_TOTAL:
+                return
+            # Comment target alone isn't enough to stop: one megathread can
+            # fill it single-handedly, starving every other (often more
+            # on-topic) thread. Require a spread of posts too.
+            if len(all_comments) >= MIN_COMMENTS_TARGET * 3 and posts_fetched >= 3:
                 return
             if p["num_comments"] == 0:
                 continue
