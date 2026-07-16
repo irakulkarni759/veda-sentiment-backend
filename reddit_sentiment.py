@@ -15,9 +15,15 @@ Install:  pip install tls_client
 Run:      python reddit_sentiment.py
 """
 
+import html
 import re
 import time
 import random
+import urllib.error
+import urllib.parse
+import urllib.request
+import xml.etree.ElementTree as ET
+
 import tls_client
 
 # Common words that carry no topic signal, so they shouldn't count as a
@@ -80,6 +86,23 @@ PROXIES = None
 DEBUG = True  # prints Reddit's raw response on failure so we can see what's blocking us
 _warmed_up = False
 
+# Once Reddit's WAF 403s a .json request it 403s them all — the block keys on
+# the client fingerprint, not the URL. Remember the block so later calls in
+# the same job skip straight to the RSS fallback instead of burning seconds
+# re-discovering it per request. Re-probe after the cooldown in case the
+# block lifts (fingerprint-based blocks have come and gone before).
+_JSON_BLOCK_COOLDOWN_S = 600
+_json_blocked_until = 0.0
+
+
+def _mark_json_blocked():
+    global _json_blocked_until
+    _json_blocked_until = time.time() + _JSON_BLOCK_COOLDOWN_S
+
+
+def _json_available():
+    return time.time() >= _json_blocked_until
+
 
 def _warm_up():
     """Visit the homepage first so Reddit issues session cookies before /search.json."""
@@ -126,6 +149,14 @@ def _get_json(url, params=None, max_retries=3):
             wait = int(resp.headers.get("retry-after", 5))
             print(f"[warn] rate limited; sleeping {wait}s")
             time.sleep(wait)
+        elif resp.status_code == 403:
+            # WAF block page: deterministic for this client fingerprint, so
+            # retrying is wasted time — flag it and let callers fall back to RSS.
+            _mark_json_blocked()
+            print("[warn] HTTP 403 (WAF block on .json); switching to RSS fallback")
+            if DEBUG:
+                print(f"[debug] body: {resp.text[:300]}".replace("\n", " "))
+            return None
         else:
             print(f"[warn] HTTP {resp.status_code}; retry {attempt + 1}")
             if DEBUG:
@@ -136,13 +167,137 @@ def _get_json(url, params=None, max_retries=3):
     return None
 
 
+# ---------------------------------------------------------------------------
+# RSS fallback transport. As of mid-2026 Reddit's WAF 403s every
+# unauthenticated .json endpoint for non-browser clients (even with TLS
+# impersonation), but the same content is still served over the documented
+# .rss feeds — to plain HTTP clients, no fingerprint tricks needed. RSS lacks
+# post/comment scores and comment counts, so .json stays the preferred
+# transport whenever it works and RSS only kicks in on a WAF block.
+# ---------------------------------------------------------------------------
+
+_ATOM_NS = {"atom": "http://www.w3.org/2005/Atom"}
+_POST_PERMALINK_RE = re.compile(r"reddit\.com(/r/([^/]+)/comments/([a-z0-9]+)[^?\s]*)")
+
+
+def _strip_html(fragment):
+    """Atom content is escaped HTML; flatten it to plain comment text."""
+    text = re.sub(r"<[^>]+>", " ", html.unescape(fragment or ""))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _get_rss(url, params=None, max_retries=3):
+    """GET an Atom feed, returning the parsed root or None.
+
+    Deliberately a plain stdlib client, NOT the tls_client session: the WAF
+    flags the imperfect Chrome TLS impersonation even on .rss (403), while a
+    boring vanilla client gets clean 200s — RSS is a documented feed feature,
+    not gated on looking like a browser."""
+    if params:
+        url = f"{url}?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(
+        url, headers={"User-Agent": HEADERS["User-Agent"], "Accept": "*/*"}
+    )
+    for attempt in range(max_retries):
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return ET.fromstring(resp.read().decode("utf-8", "replace"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                wait = min(int(e.headers.get("retry-after") or 5), 30)
+                print(f"[warn] rss rate limited; sleeping {wait}s")
+                time.sleep(wait)
+                continue
+            print(f"[warn] rss HTTP {e.code} from {url.split('?')[0]}")
+            return None
+        except Exception as e:
+            print(f"[warn] rss fetch/parse failed ({e}) from {url.split('?')[0]}")
+            time.sleep(2 ** attempt)
+    return None
+
+
+def _entry_fields(entry):
+    """(permalink_match, author, title, content_text) for one Atom entry."""
+    link = entry.find("atom:link", _ATOM_NS)
+    href = (link.get("href") if link is not None else "") or ""
+    m = _POST_PERMALINK_RE.search(href)
+    author_el = entry.find("atom:author/atom:name", _ATOM_NS)
+    author = (author_el.text or "").strip() if author_el is not None else ""
+    if author.startswith("/u/"):
+        author = author[3:]
+    title_el = entry.find("atom:title", _ATOM_NS)
+    content_el = entry.find("atom:content", _ATOM_NS)
+    return (
+        m,
+        author,
+        (title_el.text or "") if title_el is not None else "",
+        _strip_html(content_el.text if content_el is not None else ""),
+    )
+
+
+def _search_posts_rss(query, limit, sort, time_filter, subreddit):
+    path = f"/r/{subreddit}/search.rss" if subreddit else "/search.rss"
+    params = {"restrict_sr": 1} if subreddit else {}
+    params.update({"q": query, "limit": limit, "sort": sort, "t": time_filter, "type": "link"})
+    for base in (BASE, OLD_BASE):
+        root = _get_rss(f"{base}{path}", params=params)
+        if root is None:
+            continue
+        out = []
+        for entry in root.findall("atom:entry", _ATOM_NS):
+            m, _author, title, content = _entry_fields(entry)
+            if not m:  # subreddit suggestions etc., not posts
+                continue
+            out.append({
+                "id": m.group(3),
+                "title": title,
+                "selftext": content,  # includes feed boilerplate; only used for keyword matching
+                "subreddit": m.group(2),
+                "permalink": m.group(1),
+                "score": 0,           # not exposed in RSS
+                "num_comments": None,  # unknown — deliberately not 0, see gather_sentiment
+            })
+        if out:
+            print(f"[info] rss search served {len(out)} posts from {base}")
+            return out
+    return []
+
+
+def _fetch_comments_rss(permalink, max_comments):
+    post_path = permalink.rstrip("/")
+    for base in (BASE, OLD_BASE):
+        root = _get_rss(f"{base}{permalink}.rss", params={"limit": 200})
+        if root is None:
+            continue
+        comments = []
+        for entry in root.findall("atom:entry", _ATOM_NS):
+            m, author, _title, body = _entry_fields(entry)
+            if not m or m.group(1).rstrip("/") == post_path:
+                continue  # the post's own entry, not a comment
+            if not body or body in ("[deleted]", "[removed]"):
+                continue
+            comments.append({
+                "body": body,
+                "score": 0,  # RSS doesn't expose comment scores
+                "subreddit": m.group(2),
+                "author": author or None,
+                "url": f"{BASE}{m.group(1)}",
+            })
+            if len(comments) >= max_comments:
+                break
+        if comments:
+            return comments
+    return []
+
+
 def search_posts(query, limit=25, sort="relevance", time_filter="all", subreddit=None):
     """Find posts relevant to a wellness claim. Optionally scope to a subreddit.
 
     Tries www.reddit.com first, then old.reddit.com — an empty result from
     www very often means the egress IP is being soft-blocked (observed on
     Railway: instant empty responses for queries with plenty of real
-    results), and old.reddit frequently still serves real JSON there."""
+    results), and old.reddit frequently still serves real JSON there.
+    When the WAF blocks .json entirely, falls back to the RSS feeds."""
     path = f"/r/{subreddit}/search.json" if subreddit else "/search.json"
     params = {"restrict_sr": 1} if subreddit else {}
     params.update({
@@ -155,6 +310,8 @@ def search_posts(query, limit=25, sort="relevance", time_filter="all", subreddit
     })
 
     for base in (BASE, OLD_BASE):
+        if not _json_available():
+            break
         data = _get_json(f"{base}{path}", params=params)
         out = []
         for child in (data or {}).get("data", {}).get("children", []):
@@ -172,18 +329,22 @@ def search_posts(query, limit=25, sort="relevance", time_filter="all", subreddit
             return out
         print(f"[warn] empty search from {base} for '{query}'"
               + ("; trying old.reddit.com" if base == BASE else ""))
-    return []
+    return _search_posts_rss(query, limit, sort, time_filter, subreddit)
 
 
 def fetch_comments(permalink, min_score=1, max_comments=100):
     """Fetch and flatten one post's comment tree (top-level + nested replies).
     Same www -> old.reddit.com fallback as search_posts; displayed comment
-    permalinks always use www regardless of which host served the data."""
-    data = _get_json(f"{BASE}{permalink}.json", params={"raw_json": 1, "limit": 200})
-    if not data or len(data) < 2:
+    permalinks always use www regardless of which host served the data.
+    On a WAF block, falls back to the post's RSS feed — which has no comment
+    scores, so min_score doesn't apply on that path."""
+    data = None
+    if _json_available():
+        data = _get_json(f"{BASE}{permalink}.json", params={"raw_json": 1, "limit": 200})
+    if (not data or len(data) < 2) and _json_available():
         data = _get_json(f"{OLD_BASE}{permalink}.json", params={"raw_json": 1, "limit": 200})
     if not data or len(data) < 2:
-        return []
+        return _fetch_comments_rss(permalink, max_comments)
     comments = []
 
     def walk(children):
