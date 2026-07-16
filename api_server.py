@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 6  # v6: multi-pass retrieval in gather_sentiment (query variants + sort=comments fallback) — rows cached from the old single-pass scrape often have few/zero comments for claims that DO have real discussion, so force a re-scrape
+SUMMARIZER_VERSION = 7  # v7: RSS fallback + relevance-ordered post fetching — rows cached while the WAF block starved scrapes (insufficient_data despite real discussion) or via the unordered RSS path (pool dominated by one off-topic megathread) need a re-scrape
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
