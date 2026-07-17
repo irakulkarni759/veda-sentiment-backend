@@ -44,12 +44,28 @@ def _keywords(query):
     ]
 
 
-def _post_is_relevant(post, keywords):
+def _subject_keywords(query):
+    """The mandatory part of a query: the words before a ' for <purpose>'
+    clause (e.g. "creatine" in "creatine for strength"). A generic outcome
+    word like "strength" or "growth" matches all kinds of unrelated posts
+    on its own, so it can't be the ONLY thing that qualifies a post -
+    the actual subject has to be present too. Falls back to the full
+    keyword set when there's no "for" clause to split on."""
+    idx = query.lower().find(" for ")
+    core = query[:idx] if idx > 0 else query
+    return _keywords(core) or _keywords(query)
+
+
+def _post_is_relevant(post, keywords, subject_keywords=None):
     """Keep a post only if its title or body shares a significant word with
-    the query. Fails open (True) when there are no usable keywords."""
+    the query AND (when given) at least one subject keyword - matching only
+    on a generic outcome word isn't enough. Fails open (True) when there
+    are no usable keywords."""
     if not keywords:
         return True
     hay = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
+    if subject_keywords and not any(k in hay for k in subject_keywords):
+        return False
     return any(k in hay for k in keywords)
 
 # tls_client replays a browser's full TLS + HTTP2 fingerprint. If Reddit ever
@@ -433,8 +449,9 @@ def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
         # before we spend a request pulling their comment tree. Fail open:
         # if the filter would remove everything, keep the full set.
         keywords = _keywords(search_query)
+        subject_keywords = _subject_keywords(search_query)
         fresh = [p for p in posts if p.get("id") not in seen_post_ids]
-        relevant = [p for p in fresh if _post_is_relevant(p, keywords)]
+        relevant = [p for p in fresh if _post_is_relevant(p, keywords, subject_keywords)]
         posts_to_use = relevant or fresh
 
         # Fetch strongest keyword matches first. Reddit's RSS search ordering

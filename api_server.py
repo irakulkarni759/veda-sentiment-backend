@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 8  # v8: top_quote_indices returned as numeric strings were silently dropped (isinstance(i, int) check), producing top_quotes=[] despite Claude picking real indices — rows cached with real comments but zero quotes need a re-summarize
+SUMMARIZER_VERSION = 9  # v9: post-relevance filter accepted a single generic outcome keyword (e.g. "strength") with no subject-word match, pulling in off-topic posts (weight-loss/glute-progress threads for "creatine for strength") — now requires the subject (pre-"for") keyword too
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
