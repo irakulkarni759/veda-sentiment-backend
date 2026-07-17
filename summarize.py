@@ -156,8 +156,23 @@ def summarize_comments(claim: str, comments: list[dict], max_comments_in_prompt:
     indices = parsed.pop("top_quote_indices", [])
     top_quotes = []
     for i in indices:
-        if isinstance(i, int) and 0 <= i < len(ranked):
-            top_quotes.append(ranked[i])
+        # Claude doesn't always emit these as JSON numbers despite the
+        # schema saying <int> — a numeric string ("0" instead of 0) used to
+        # silently vanish here (isinstance(i, int) is False for str), giving
+        # an empty top_quotes even when Claude clearly picked real indices.
+        if isinstance(i, bool):
+            continue
+        if isinstance(i, int):
+            idx = i
+        elif isinstance(i, str) and i.strip().lstrip("-").isdigit():
+            idx = int(i)
+        else:
+            continue
+        if 0 <= idx < len(ranked):
+            top_quotes.append(ranked[idx])
+
+    if indices and not top_quotes:
+        print(f"[warn] top_quote_indices={indices!r} produced 0 usable quotes out of {len(ranked)} ranked comments")
 
     parsed["top_quotes"] = top_quotes
     return parsed

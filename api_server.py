@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 7  # v7: RSS fallback + relevance-ordered post fetching — rows cached while the WAF block starved scrapes (insufficient_data despite real discussion) or via the unordered RSS path (pool dominated by one off-topic megathread) need a re-scrape
+SUMMARIZER_VERSION = 8  # v8: top_quote_indices returned as numeric strings were silently dropped (isinstance(i, int) check), producing top_quotes=[] despite Claude picking real indices — rows cached with real comments but zero quotes need a re-summarize
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
