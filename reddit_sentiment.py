@@ -58,13 +58,17 @@ def _subject_keywords(query):
 
 def _post_is_relevant(post, keywords, subject_keywords=None):
     """Keep a post only if its title or body shares a significant word with
-    the query AND (when given) at least one subject keyword - matching only
-    on a generic outcome word isn't enough. Fails open (True) when there
-    are no usable keywords."""
+    the query AND (when given) the subject appears in the TITLE specifically.
+    A subject mention buried in a long, otherwise-unrelated post body (e.g. a
+    weight-loss writeup that name-drops "creatine" once in a supplement list)
+    isn't enough to make the post - and its comment section - actually about
+    the claim; a post genuinely about the subject almost always says so in
+    its title. Fails open (True) when there are no usable keywords."""
     if not keywords:
         return True
-    hay = f"{post.get('title', '')} {post.get('selftext', '')}".lower()
-    if subject_keywords and not any(k in hay for k in subject_keywords):
+    title = (post.get("title") or "").lower()
+    hay = f"{title} {post.get('selftext', '')}".lower()
+    if subject_keywords and not any(k in title for k in subject_keywords):
         return False
     return any(k in hay for k in keywords)
 
@@ -441,18 +445,21 @@ def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
     seen_post_ids = set()
     posts_fetched = 0
 
-    def run_pass(search_query, sort="relevance"):
+    def run_pass(search_query, sort="relevance", allow_fail_open=False):
         nonlocal posts_fetched
         posts = search_posts(search_query, limit=post_limit, sort=sort, subreddit=subreddit)
 
         # Drop posts that don't share any significant word with the query
-        # before we spend a request pulling their comment tree. Fail open:
-        # if the filter would remove everything, keep the full set.
+        # before we spend a request pulling their comment tree. Fail open to
+        # the unfiltered set ONLY on the final, most-desperate pass - doing it
+        # on every pass let a subject mention buried in an unrelated post
+        # (or zero real matches at all) silently refill the "relevant" list
+        # with noise instead of the caller moving on to a broader variant.
         keywords = _keywords(search_query)
         subject_keywords = _subject_keywords(search_query)
         fresh = [p for p in posts if p.get("id") not in seen_post_ids]
         relevant = [p for p in fresh if _post_is_relevant(p, keywords, subject_keywords)]
-        posts_to_use = relevant or fresh
+        posts_to_use = relevant or (fresh if allow_fail_open else [])
 
         # Fetch strongest keyword matches first. Reddit's RSS search ordering
         # is noticeably worse than .json's — a huge thread matching one
@@ -496,9 +503,11 @@ def gather_sentiment(query, post_limit=8, per_post_comments=40, subreddit=None):
             break
 
     # Last resort: same broadest variant, but ranked by comment count —
-    # surfaces big discussion threads that relevance sort can bury.
+    # surfaces big discussion threads that relevance sort can bury. This is
+    # the only pass allowed to fail open to unfiltered results, so a
+    # genuinely obscure topic still returns something rather than nothing.
     if len(all_comments) < MIN_COMMENTS_TARGET and posts_fetched < MAX_POSTS_TOTAL:
-        run_pass(_search_variants(query)[-1], sort="comments")
+        run_pass(_search_variants(query)[-1], sort="comments", allow_fail_open=True)
 
     print(f"[info] {len(all_comments)} comments gathered across {posts_fetched} posts")
     return all_comments

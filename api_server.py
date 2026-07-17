@@ -64,7 +64,7 @@ CACHE_TTL_DAYS = 14  # re-scrape a claim after this many days
 # otherwise a summarizer improvement silently doesn't apply to already-cached
 # claims for up to two weeks, which is exactly what happened with the
 # relevance-check fix and existing "cold water immersion" style claims.
-SUMMARIZER_VERSION = 9  # v9: post-relevance filter accepted a single generic outcome keyword (e.g. "strength") with no subject-word match, pulling in off-topic posts (weight-loss/glute-progress threads for "creatine for strength") — now requires the subject (pre-"for") keyword too
+SUMMARIZER_VERSION = 10  # v10: subject match required a keyword ANYWHERE in the post (title+body), so a subject name-dropped once in an otherwise-unrelated post's body still passed - now requires it in the TITLE; also removed the fail-open-to-unfiltered fallback on non-final passes, which was quietly reintroducing exactly the off-topic posts the subject filter was rejecting
 
 app = FastAPI(title="Veda Claim Sentiment API")
 
